@@ -3,6 +3,8 @@ using Microsoft.OpenApi.Models;
 using System.Text.Json.Serialization;
 using DeliveryManagementAPI.AccesoDatos.Contexto;
 using DeliveryManagementAPI.AccesoDatos.Repositorio;
+using DeliveryManagementAPI.Service.Contract;
+using DeliveryManagementAPI.Service.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +23,11 @@ builder.Services.AddDbContext<DeliveryContext>(options =>
 builder.Services.AddScoped<IClienteRepository, ClienteRepository>();
 builder.Services.AddScoped<IRepartidorRepository, RepartidorRepository>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
+
+// Inyección de Dependencias - Servicios de Negocio
+builder.Services.AddScoped<IClienteService, ClienteService>();
+builder.Services.AddScoped<IRepartidorService, RepartidorService>();
+builder.Services.AddScoped<IPedidoService, PedidoService>();
 
 // Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
