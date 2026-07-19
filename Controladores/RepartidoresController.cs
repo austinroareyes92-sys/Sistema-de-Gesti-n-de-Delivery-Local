@@ -1,122 +1,108 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using DeliveryManagementAPI.Data;
-using DeliveryManagementAPI.DTOs;
-using DeliveryManagementAPI.Models;
+using DeliveryManagementAPI.AccesoDatos.Entidades;
+using DeliveryManagementAPI.AccesoDatos.Modelos;
+using DeliveryManagementAPI.AccesoDatos.Repositorio;
 
-namespace DeliveryManagementAPI.Controllers;
+namespace DeliveryManagementAPI.Controladores;
 
 [ApiController]
 [Route("api/[controller]")]
 public class RepartidoresController : ControllerBase
 {
-    private readonly DeliveryContext _context;
+    private readonly IRepartidorRepository _repartidorRepository;
 
-    public RepartidoresController(DeliveryContext context)
+    public RepartidoresController(IRepartidorRepository repartidorRepository)
     {
-        _context = context;
+        _repartidorRepository = repartidorRepository;
     }
 
-    private static RepartidorDTO ToDTO(Repartidor r) => new()
-    {
-        Id = r.Id,
-        Nombre = r.Nombre,
-        Telefono = r.Telefono,
-        Vehiculo = r.Vehiculo,
-        Placa = r.Placa,
-        Disponible = r.Disponible
-    };
-
-    // GET: api/repartidores
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<RepartidorDTO>>> GetRepartidores()
+    public async Task<ActionResult<IEnumerable<RepartidorDTO>>> ObtenerTodos()
     {
-        var repartidores = await _context.Repartidores.ToListAsync();
-        return Ok(repartidores.Select(ToDTO));
+        var repartidores = await _repartidorRepository.ObtenerTodosAsync();
+        return Ok(repartidores.Select(MapToDTO));
     }
 
-    // GET: api/repartidores/disponibles
-    [HttpGet("disponibles")]
-    public async Task<ActionResult<IEnumerable<RepartidorDTO>>> GetDisponibles()
+    [HttpGet("{id}")]
+    public async Task<ActionResult<RepartidorDTO>> ObtenerPorId(int id)
     {
-        var repartidores = await _context.Repartidores
-            .Where(r => r.Disponible)
-            .ToListAsync();
-
-        return Ok(repartidores.Select(ToDTO));
-    }
-
-    // GET: api/repartidores/5
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<RepartidorDTO>> GetRepartidor(int id)
-    {
-        var repartidor = await _context.Repartidores.FindAsync(id);
-
+        var repartidor = await _repartidorRepository.ObtenerPorIdAsync(id);
         if (repartidor == null)
-            return NotFound($"No se encontró el repartidor con Id {id}");
+            return NotFound(new { mensaje = "Repartidor no encontrado" });
 
-        return Ok(ToDTO(repartidor));
+        return Ok(MapToDTO(repartidor));
     }
 
-    // POST: api/repartidores
-    [HttpPost]
-    public async Task<ActionResult<RepartidorDTO>> CrearRepartidor(RepartidorCreateDTO dto)
+    [HttpGet("disponibles")]
+    public async Task<ActionResult<IEnumerable<RepartidorDTO>>> ObtenerDisponibles()
     {
-        var repartidor = new Repartidor
+        var repartidores = await _repartidorRepository.ObtenerDisponiblesAsync();
+        return Ok(repartidores.Select(MapToDTO));
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<RepartidorDTO>> Crear([FromBody] RepartidorCreateDTO dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var repartidor = new RepartidorEntidad
         {
             Nombre = dto.Nombre,
             Telefono = dto.Telefono,
             Vehiculo = dto.Vehiculo,
-            Placa = dto.Placa,
-            Disponible = true
+            Placa = dto.Placa
         };
 
-        _context.Repartidores.Add(repartidor);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetRepartidor), new { id = repartidor.Id }, ToDTO(repartidor));
+        var repartidorCreado = await _repartidorRepository.CrearAsync(repartidor);
+        return CreatedAtAction(nameof(ObtenerPorId), new { id = repartidorCreado.Id }, MapToDTO(repartidorCreado));
     }
 
-    // PUT: api/repartidores/5
-    [HttpPut("{id:int}")]
-    public async Task<IActionResult> ActualizarRepartidor(int id, RepartidorUpdateDTO dto)
+    [HttpPut("{id}")]
+    public async Task<ActionResult<RepartidorDTO>> Actualizar(int id, [FromBody] RepartidorUpdateDTO dto)
     {
-        var repartidor = await _context.Repartidores.FindAsync(id);
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
+        var repartidor = await _repartidorRepository.ObtenerPorIdAsync(id);
         if (repartidor == null)
-            return NotFound($"No se encontró el repartidor con Id {id}");
+            return NotFound(new { mensaje = "Repartidor no encontrado" });
 
-        repartidor.Nombre = dto.Nombre;
-        repartidor.Telefono = dto.Telefono;
-        repartidor.Vehiculo = dto.Vehiculo;
-        repartidor.Placa = dto.Placa;
-        repartidor.Disponible = dto.Disponible;
+        if (!string.IsNullOrWhiteSpace(dto.Nombre))
+            repartidor.Nombre = dto.Nombre;
+        if (!string.IsNullOrWhiteSpace(dto.Telefono))
+            repartidor.Telefono = dto.Telefono;
+        if (!string.IsNullOrWhiteSpace(dto.Vehiculo))
+            repartidor.Vehiculo = dto.Vehiculo;
+        if (dto.Placa != null)
+            repartidor.Placa = dto.Placa;
+        if (dto.Disponible.HasValue)
+            repartidor.Disponible = dto.Disponible.Value;
 
-        await _context.SaveChangesAsync();
+        var repartidorActualizado = await _repartidorRepository.ActualizarAsync(repartidor);
+        return Ok(MapToDTO(repartidorActualizado));
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<ActionResult> Eliminar(int id)
+    {
+        var resultado = await _repartidorRepository.EliminarAsync(id);
+        if (!resultado)
+            return NotFound(new { mensaje = "Repartidor no encontrado" });
 
         return NoContent();
     }
 
-    // DELETE: api/repartidores/5
-    [HttpDelete("{id:int}")]
-    public async Task<IActionResult> EliminarRepartidor(int id)
+    private RepartidorDTO MapToDTO(RepartidorEntidad repartidor)
     {
-        var repartidor = await _context.Repartidores
-            .Include(r => r.Pedidos)
-            .FirstOrDefaultAsync(r => r.Id == id);
-
-        if (repartidor == null)
-            return NotFound($"No se encontró el repartidor con Id {id}");
-
-        var tienePedidosActivos = repartidor.Pedidos
-            .Any(p => p.Estado != EstadoPedido.Entregado && p.Estado != EstadoPedido.Cancelado);
-
-        if (tienePedidosActivos)
-            return BadRequest("No se puede eliminar un repartidor con pedidos activos asignados");
-
-        _context.Repartidores.Remove(repartidor);
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+        return new RepartidorDTO
+        {
+            Id = repartidor.Id,
+            Nombre = repartidor.Nombre,
+            Telefono = repartidor.Telefono,
+            Vehiculo = repartidor.Vehiculo,
+            Placa = repartidor.Placa,
+            Disponible = repartidor.Disponible
+        };
     }
 }
