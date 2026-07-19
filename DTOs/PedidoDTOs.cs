@@ -3,7 +3,7 @@ using DeliveryManagementAPI.Models;
 
 namespace DeliveryManagementAPI.DTOs;
 
-/// <summary>DTO de salida: incluye datos legibles del cliente y repartidor, no solo sus IDs.</summary>
+
 public class PedidoDTO
 {
     public int Id { get; set; }
@@ -19,7 +19,7 @@ public class PedidoDTO
     public string? Notas { get; set; }
 }
 
-/// <summary>DTO de entrada para crear un pedido. Nace siempre en estado "Pendiente" y sin repartidor.</summary>
+
 public class PedidoCreateDTO
 {
     [Required(ErrorMessage = "El cliente es obligatorio")]
@@ -36,7 +36,7 @@ public class PedidoCreateDTO
     public string? Notas { get; set; }
 }
 
-/// <summary>DTO de entrada para actualizar datos generales de un pedido (no el estado).</summary>
+
 public class PedidoUpdateDTO
 {
     [Required(ErrorMessage = "La dirección de entrega es obligatoria")]
@@ -50,7 +50,7 @@ public class PedidoUpdateDTO
     public string? Notas { get; set; }
 }
 
-/// <summary>DTO de entrada para cambiar el estado de un pedido y, opcionalmente, asignar repartidor.</summary>
+
 public class PedidoEstadoDTO
 {
     [Required(ErrorMessage = "El estado es obligatorio")]
