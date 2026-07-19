@@ -1,7 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using System.Text.Json.Serialization;
-using DeliveryManagementAPI.Data;
+using DeliveryManagementAPI.AccesoDatos.Contexto;
+using DeliveryManagementAPI.AccesoDatos.Repositorio;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,9 +13,14 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     });
 
-// DbContext - SQL Server, cadena de conexión desde appsettings.json
+// DbContext - SQLite para mayor portabilidad
 builder.Services.AddDbContext<DeliveryContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=delivery.db"));
+
+// Inyección de Dependencias - Repositorios
+builder.Services.AddScoped<IClienteRepository, ClienteRepository>();
+builder.Services.AddScoped<IRepartidorRepository, RepartidorRepository>();
+builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
 
 // Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -41,8 +47,15 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Aplicar migraciones automáticamente en desarrollo
 if (app.Environment.IsDevelopment())
 {
+    using (var scope = app.Services.CreateScope())
+    {
+        var context = scope.ServiceProvider.GetRequiredService<DeliveryContext>();
+        context.Database.EnsureCreated();
+    }
+
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
