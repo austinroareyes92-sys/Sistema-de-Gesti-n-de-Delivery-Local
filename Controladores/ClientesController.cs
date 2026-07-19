@@ -1,107 +1,109 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using DeliveryManagementAPI.Data;
-using DeliveryManagementAPI.DTOs;
-using DeliveryManagementAPI.Models;
+using DeliveryManagementAPI.AccesoDatos.Entidades;
+using DeliveryManagementAPI.AccesoDatos.Modelos;
+using DeliveryManagementAPI.AccesoDatos.Repositorio;
 
-namespace DeliveryManagementAPI.Controllers;
+namespace DeliveryManagementAPI.Controladores;
 
 [ApiController]
 [Route("api/[controller]")]
 public class ClientesController : ControllerBase
 {
-    private readonly DeliveryContext _context;
+    private readonly IClienteRepository _clienteRepository;
 
-    public ClientesController(DeliveryContext context)
+    public ClientesController(IClienteRepository clienteRepository)
     {
-        _context = context;
+        _clienteRepository = clienteRepository;
     }
 
-    private static ClienteDTO ToDTO(Cliente c) => new()
-    {
-        Id = c.Id,
-        Nombre = c.Nombre,
-        Telefono = c.Telefono,
-        Direccion = c.Direccion,
-        Email = c.Email,
-        FechaRegistro = c.FechaRegistro
-    };
-
-    // GET: api/clientes
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<ClienteDTO>>> GetClientes()
+    public async Task<ActionResult<IEnumerable<ClienteDTO>>> ObtenerTodos()
     {
-        var clientes = await _context.Clientes.ToListAsync();
-        return Ok(clientes.Select(ToDTO));
+        var clientes = await _clienteRepository.ObtenerTodosAsync();
+        return Ok(clientes.Select(MapToDTO));
     }
 
-    // GET: api/clientes/5
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<ClienteDTO>> GetCliente(int id)
+    [HttpGet("{id}")]
+    public async Task<ActionResult<ClienteDTO>> ObtenerPorId(int id)
     {
-        var cliente = await _context.Clientes.FindAsync(id);
-
+        var cliente = await _clienteRepository.ObtenerPorIdAsync(id);
         if (cliente == null)
-            return NotFound($"No se encontró el cliente con Id {id}");
+            return NotFound(new { mensaje = "Cliente no encontrado" });
 
-        return Ok(ToDTO(cliente));
+        return Ok(MapToDTO(cliente));
     }
 
-    // POST: api/clientes
-    [HttpPost]
-    public async Task<ActionResult<ClienteDTO>> CrearCliente(ClienteCreateDTO dto)
+    [HttpGet("buscar")]
+    public async Task<ActionResult<IEnumerable<ClienteDTO>>> BuscarPorNombre([FromQuery] string nombre)
     {
-        var cliente = new Cliente
+        if (string.IsNullOrWhiteSpace(nombre))
+            return BadRequest(new { mensaje = "El parámetro 'nombre' es requerido" });
+
+        var clientes = await _clienteRepository.BuscarPorNombreAsync(nombre);
+        return Ok(clientes.Select(MapToDTO));
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<ClienteDTO>> Crear([FromBody] ClienteCreateDTO dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var cliente = new ClienteEntidad
         {
             Nombre = dto.Nombre,
             Telefono = dto.Telefono,
             Direccion = dto.Direccion,
-            Email = dto.Email,
-            FechaRegistro = DateTime.UtcNow
+            Email = dto.Email
         };
 
-        _context.Clientes.Add(cliente);
-        await _context.SaveChangesAsync();
-
-        return CreatedAtAction(nameof(GetCliente), new { id = cliente.Id }, ToDTO(cliente));
+        var clienteCreado = await _clienteRepository.CrearAsync(cliente);
+        return CreatedAtAction(nameof(ObtenerPorId), new { id = clienteCreado.Id }, MapToDTO(clienteCreado));
     }
 
-    // PUT: api/clientes/5
-    [HttpPut("{id:int}")]
-    public async Task<IActionResult> ActualizarCliente(int id, ClienteUpdateDTO dto)
+    [HttpPut("{id}")]
+    public async Task<ActionResult<ClienteDTO>> Actualizar(int id, [FromBody] ClienteUpdateDTO dto)
     {
-        var cliente = await _context.Clientes.FindAsync(id);
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
+        var cliente = await _clienteRepository.ObtenerPorIdAsync(id);
         if (cliente == null)
-            return NotFound($"No se encontró el cliente con Id {id}");
+            return NotFound(new { mensaje = "Cliente no encontrado" });
 
-        cliente.Nombre = dto.Nombre;
-        cliente.Telefono = dto.Telefono;
-        cliente.Direccion = dto.Direccion;
-        cliente.Email = dto.Email;
+        if (!string.IsNullOrWhiteSpace(dto.Nombre))
+            cliente.Nombre = dto.Nombre;
+        if (!string.IsNullOrWhiteSpace(dto.Telefono))
+            cliente.Telefono = dto.Telefono;
+        if (!string.IsNullOrWhiteSpace(dto.Direccion))
+            cliente.Direccion = dto.Direccion;
+        if (dto.Email != null)
+            cliente.Email = dto.Email;
 
-        await _context.SaveChangesAsync();
+        var clienteActualizado = await _clienteRepository.ActualizarAsync(cliente);
+        return Ok(MapToDTO(clienteActualizado));
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<ActionResult> Eliminar(int id)
+    {
+        var resultado = await _clienteRepository.EliminarAsync(id);
+        if (!resultado)
+            return BadRequest(new { mensaje = "No se puede eliminar el cliente. Verifica que no tenga pedidos asociados" });
 
         return NoContent();
     }
 
-    // DELETE: api/clientes/5
-    [HttpDelete("{id:int}")]
-    public async Task<IActionResult> EliminarCliente(int id)
+    private ClienteDTO MapToDTO(ClienteEntidad cliente)
     {
-        var cliente = await _context.Clientes
-            .Include(c => c.Pedidos)
-            .FirstOrDefaultAsync(c => c.Id == id);
-
-        if (cliente == null)
-            return NotFound($"No se encontró el cliente con Id {id}");
-
-        if (cliente.Pedidos.Any())
-            return BadRequest("No se puede eliminar un cliente que tiene pedidos registrados");
-
-        _context.Clientes.Remove(cliente);
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+        return new ClienteDTO
+        {
+            Id = cliente.Id,
+            Nombre = cliente.Nombre,
+            Telefono = cliente.Telefono,
+            Direccion = cliente.Direccion,
+            Email = cliente.Email,
+            FechaRegistro = cliente.FechaRegistro
+        };
     }
 }

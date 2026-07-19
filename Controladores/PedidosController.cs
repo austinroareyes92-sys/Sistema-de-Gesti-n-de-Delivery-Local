@@ -1,171 +1,162 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using DeliveryManagementAPI.Data;
-using DeliveryManagementAPI.DTOs;
+using DeliveryManagementAPI.AccesoDatos.Entidades;
+using DeliveryManagementAPI.AccesoDatos.Modelos;
+using DeliveryManagementAPI.AccesoDatos.Repositorio;
 using DeliveryManagementAPI.Models;
 
-namespace DeliveryManagementAPI.Controllers;
+namespace DeliveryManagementAPI.Controladores;
 
 [ApiController]
 [Route("api/[controller]")]
 public class PedidosController : ControllerBase
 {
-    private readonly DeliveryContext _context;
+    private readonly IPedidoRepository _pedidoRepository;
+    private readonly IClienteRepository _clienteRepository;
+    private readonly IRepartidorRepository _repartidorRepository;
 
-    public PedidosController(DeliveryContext context)
+    public PedidosController(
+        IPedidoRepository pedidoRepository,
+        IClienteRepository clienteRepository,
+        IRepartidorRepository repartidorRepository)
     {
-        _context = context;
+        _pedidoRepository = pedidoRepository;
+        _clienteRepository = clienteRepository;
+        _repartidorRepository = repartidorRepository;
     }
 
-    private static PedidoDTO ToDTO(Pedido p) => new()
-    {
-        Id = p.Id,
-        ClienteId = p.ClienteId,
-        ClienteNombre = p.Cliente?.Nombre ?? string.Empty,
-        RepartidorId = p.RepartidorId,
-        RepartidorNombre = p.Repartidor?.Nombre,
-        DireccionEntrega = p.DireccionEntrega,
-        FechaPedido = p.FechaPedido,
-        FechaEntrega = p.FechaEntrega,
-        Estado = p.Estado.ToString(),
-        Total = p.Total,
-        Notas = p.Notas
-    };
-
-    // GET: api/pedidos
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<PedidoDTO>>> GetPedidos()
+    public async Task<ActionResult<IEnumerable<PedidoDTO>>> ObtenerTodos([FromQuery] string? estado = null)
     {
-        var pedidos = await _context.Pedidos
-            .Include(p => p.Cliente)
-            .Include(p => p.Repartidor)
-            .OrderByDescending(p => p.FechaPedido)
-            .ToListAsync();
+        IEnumerable<PedidoEntidad> pedidos;
 
-        return Ok(pedidos.Select(ToDTO));
+        if (!string.IsNullOrWhiteSpace(estado))
+        {
+            // Validar que el estado sea válido
+            if (!Enum.TryParse<EstadoPedido>(estado, true, out var estadoEnum))
+                return BadRequest(new { mensaje = $"Estado '{estado}' no válido. Estados válidos: {string.Join(", ", Enum.GetNames(typeof(EstadoPedido)))}" });
+
+            pedidos = await _pedidoRepository.ObtenerPorEstadoAsync(estadoEnum);
+        }
+        else
+        {
+            pedidos = await _pedidoRepository.ObtenerTodosAsync();
+        }
+
+        return Ok(pedidos.Select(MapToDTO));
     }
 
-    // GET: api/pedidos/5
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<PedidoDTO>> GetPedido(int id)
+    [HttpGet("{id}")]
+    public async Task<ActionResult<PedidoDTO>> ObtenerPorId(int id)
     {
-        var pedido = await _context.Pedidos
-            .Include(p => p.Cliente)
-            .Include(p => p.Repartidor)
-            .FirstOrDefaultAsync(p => p.Id == id);
-
+        var pedido = await _pedidoRepository.ObtenerPorIdAsync(id);
         if (pedido == null)
-            return NotFound($"No se encontró el pedido con Id {id}");
+            return NotFound(new { mensaje = "Pedido no encontrado" });
 
-        return Ok(ToDTO(pedido));
+        return Ok(MapToDTO(pedido));
     }
 
-    // GET: api/pedidos/cliente/3
-    [HttpGet("cliente/{clienteId:int}")]
-    public async Task<ActionResult<IEnumerable<PedidoDTO>>> GetPedidosPorCliente(int clienteId)
-    {
-        var existeCliente = await _context.Clientes.AnyAsync(c => c.Id == clienteId);
-        if (!existeCliente)
-            return NotFound($"No se encontró el cliente con Id {clienteId}");
-
-        var pedidos = await _context.Pedidos
-            .Include(p => p.Cliente)
-            .Include(p => p.Repartidor)
-            .Where(p => p.ClienteId == clienteId)
-            .OrderByDescending(p => p.FechaPedido)
-            .ToListAsync();
-
-        return Ok(pedidos.Select(ToDTO));
-    }
-
-    // POST: api/pedidos
     [HttpPost]
-    public async Task<ActionResult<PedidoDTO>> CrearPedido(PedidoCreateDTO dto)
+    public async Task<ActionResult<PedidoDTO>> Crear([FromBody] PedidoCreateDTO dto)
     {
-        var clienteExiste = await _context.Clientes.AnyAsync(c => c.Id == dto.ClienteId);
-        if (!clienteExiste)
-            return BadRequest($"No existe un cliente con Id {dto.ClienteId}");
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
-        var pedido = new Pedido
+        // Validar que el cliente exista
+        var cliente = await _clienteRepository.ObtenerPorIdAsync(dto.ClienteId);
+        if (cliente == null)
+            return BadRequest(new { mensaje = "El cliente especificado no existe" });
+
+        // Validar que el repartidor exista si está especificado
+        if (dto.RepartidorId.HasValue)
+        {
+            var repartidor = await _repartidorRepository.ObtenerPorIdAsync(dto.RepartidorId.Value);
+            if (repartidor == null)
+                return BadRequest(new { mensaje = "El repartidor especificado no existe" });
+        }
+
+        var pedido = new PedidoEntidad
         {
             ClienteId = dto.ClienteId,
+            RepartidorId = dto.RepartidorId,
             DireccionEntrega = dto.DireccionEntrega,
             Total = dto.Total,
             Notas = dto.Notas,
-            FechaPedido = DateTime.UtcNow,
             Estado = EstadoPedido.Pendiente
         };
 
-        _context.Pedidos.Add(pedido);
-        await _context.SaveChangesAsync();
-
-        // Se carga la navegación de Cliente para poder devolver su nombre en el DTO
-        await _context.Entry(pedido).Reference(p => p.Cliente).LoadAsync();
-
-        return CreatedAtAction(nameof(GetPedido), new { id = pedido.Id }, ToDTO(pedido));
+        var pedidoCreado = await _pedidoRepository.CrearAsync(pedido);
+        return CreatedAtAction(nameof(ObtenerPorId), new { id = pedidoCreado.Id }, MapToDTO(pedidoCreado));
     }
 
-    // PUT: api/pedidos/5  (datos generales, no cambia estado ni repartidor)
-    [HttpPut("{id:int}")]
-    public async Task<IActionResult> ActualizarPedido(int id, PedidoUpdateDTO dto)
+    [HttpPut("{id}")]
+    public async Task<ActionResult<PedidoDTO>> Actualizar(int id, [FromBody] PedidoUpdateDTO dto)
     {
-        var pedido = await _context.Pedidos.FindAsync(id);
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
 
+        var pedido = await _pedidoRepository.ObtenerPorIdAsync(id);
         if (pedido == null)
-            return NotFound($"No se encontró el pedido con Id {id}");
+            return NotFound(new { mensaje = "Pedido no encontrado" });
 
-        if (pedido.Estado is EstadoPedido.Entregado or EstadoPedido.Cancelado)
-            return BadRequest("No se puede modificar un pedido ya entregado o cancelado");
-
-        pedido.DireccionEntrega = dto.DireccionEntrega;
-        pedido.Total = dto.Total;
-        pedido.Notas = dto.Notas;
-
-        await _context.SaveChangesAsync();
-
-        return NoContent();
-    }
-
-    // PATCH: api/pedidos/5/estado  (cambia estado y, opcionalmente, asigna repartidor)
-    [HttpPatch("{id:int}/estado")]
-    public async Task<IActionResult> ActualizarEstado(int id, PedidoEstadoDTO dto)
-    {
-        var pedido = await _context.Pedidos.FindAsync(id);
-
-        if (pedido == null)
-            return NotFound($"No se encontró el pedido con Id {id}");
-
+        // Validar repartidor si se está actualizando
         if (dto.RepartidorId.HasValue)
         {
-            var repartidorExiste = await _context.Repartidores.AnyAsync(r => r.Id == dto.RepartidorId.Value);
-            if (!repartidorExiste)
-                return BadRequest($"No existe un repartidor con Id {dto.RepartidorId}");
-
-            pedido.RepartidorId = dto.RepartidorId;
+            var repartidor = await _repartidorRepository.ObtenerPorIdAsync(dto.RepartidorId.Value);
+            if (repartidor == null)
+                return BadRequest(new { mensaje = "El repartidor especificado no existe" });
+            pedido.RepartidorId = dto.RepartidorId.Value;
         }
 
-        pedido.Estado = dto.Estado;
+        if (!string.IsNullOrWhiteSpace(dto.DireccionEntrega))
+            pedido.DireccionEntrega = dto.DireccionEntrega;
+        if (dto.Estado.HasValue)
+            pedido.Estado = dto.Estado.Value;
+        if (dto.Total.HasValue)
+            pedido.Total = dto.Total.Value;
+        if (dto.Notas != null)
+            pedido.Notas = dto.Notas;
 
-        if (dto.Estado == EstadoPedido.Entregado)
-            pedido.FechaEntrega = DateTime.UtcNow;
+        var pedidoActualizado = await _pedidoRepository.ActualizarAsync(pedido);
+        return Ok(MapToDTO(pedidoActualizado));
+    }
 
-        await _context.SaveChangesAsync();
+    [HttpDelete("{id}")]
+    public async Task<ActionResult> Eliminar(int id)
+    {
+        var resultado = await _pedidoRepository.EliminarAsync(id);
+        if (!resultado)
+            return NotFound(new { mensaje = "Pedido no encontrado" });
 
         return NoContent();
     }
 
-    // DELETE: api/pedidos/5
-    [HttpDelete("{id:int}")]
-    public async Task<IActionResult> EliminarPedido(int id)
+    [HttpGet("cliente/{clienteId}")]
+    public async Task<ActionResult<IEnumerable<PedidoDTO>>> ObtenerPorCliente(int clienteId)
     {
-        var pedido = await _context.Pedidos.FindAsync(id);
+        var pedidos = await _pedidoRepository.ObtenerPorClienteAsync(clienteId);
+        return Ok(pedidos.Select(MapToDTO));
+    }
 
-        if (pedido == null)
-            return NotFound($"No se encontró el pedido con Id {id}");
+    [HttpGet("repartidor/{repartidorId}")]
+    public async Task<ActionResult<IEnumerable<PedidoDTO>>> ObtenerPorRepartidor(int repartidorId)
+    {
+        var pedidos = await _pedidoRepository.ObtenerPorRepartidorAsync(repartidorId);
+        return Ok(pedidos.Select(MapToDTO));
+    }
 
-        _context.Pedidos.Remove(pedido);
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+    private PedidoDTO MapToDTO(PedidoEntidad pedido)
+    {
+        return new PedidoDTO
+        {
+            Id = pedido.Id,
+            ClienteId = pedido.ClienteId,
+            RepartidorId = pedido.RepartidorId,
+            DireccionEntrega = pedido.DireccionEntrega,
+            FechaPedido = pedido.FechaPedido,
+            FechaEntrega = pedido.FechaEntrega,
+            Estado = pedido.Estado,
+            Total = pedido.Total,
+            Notas = pedido.Notas
+        };
     }
 }
